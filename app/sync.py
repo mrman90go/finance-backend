@@ -1,7 +1,9 @@
+import hashlib
 import json
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import select
+from .config import settings
 from .db import SessionLocal
 from .insights import refresh_classifications
 from .models import Connection, Account, Transaction, SyncLog
@@ -57,7 +59,10 @@ async def sync_all():
                     account.balance_updated_at = datetime.utcnow()
                 for tx in txdata.get("transactions", {}).get("booked", []):
                     provider_id = tx.get("internalTransactionId") or tx.get("entryReference") or tx.get("transactionId")
-                    if provider_id and db.scalar(select(Transaction).where(Transaction.account_id == account.id, Transaction.provider_transaction_id == provider_id)):
+                    if not provider_id:
+                        stable = json.dumps(tx, sort_keys=True, separators=(",", ":"))
+                        provider_id = "derived-" + hashlib.sha256(stable.encode()).hexdigest()
+                    if db.scalar(select(Transaction).where(Transaction.account_id == account.id, Transaction.provider_transaction_id == provider_id)):
                         continue
                     amount = Decimal(tx["transactionAmount"]["amount"])
                     merchant = tx.get("creditorName") or tx.get("debtorName")
