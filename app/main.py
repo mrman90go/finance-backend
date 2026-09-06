@@ -31,7 +31,7 @@ class ConnectionRequest(BaseModel):
 async def startup():
     init_db()
     if settings.gc_secret_id and settings.gc_secret_key:
-        scheduler.add_job(sync_all, "interval", hours=settings.sync_interval_hours, id="daily-sync", replace_existing=True, next_run_time=datetime.utcnow())
+        scheduler.add_job(sync_all, "interval", hours=settings.sync_interval_hours, id="daily-sync", replace_existing=True)
         scheduler.start()
 
 @app.on_event("shutdown")
