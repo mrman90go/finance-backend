@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import select
 from .db import SessionLocal
+from .insights import refresh_classifications
 from .models import Connection, Account, Transaction, SyncLog
 from .gocardless import GoCardlessClient
 
@@ -69,6 +70,7 @@ async def sync_all():
                     db.add(t); inserted += 1
                 conn.last_synced_at = datetime.utcnow()
         db.commit()
+        refresh_classifications(db)
         log.status = "success"; log.message = f"Inserted {inserted} transactions"; log.finished_at = datetime.utcnow(); db.commit()
         return {"inserted": inserted}
     except Exception as e:
