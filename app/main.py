@@ -4,7 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from .config import settings
@@ -23,6 +23,29 @@ async def require_api_key(api_key: str | None = Security(api_key_header)):
     if settings.api_key and api_key != settings.api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+def remove_excluded_sabadell_data():
+    if not settings.sabadell_iban_last4:
+        return
+    db = SessionLocal()
+    try:
+        connection_ids = db.scalars(
+            select(Connection.id).where(Connection.institution_id == "BANCSABADELL_BSABESBB")
+        ).all()
+        if not connection_ids:
+            return
+        account_ids = db.scalars(
+            select(Account.id).where(
+                Account.connection_id.in_(connection_ids),
+                (Account.iban_last4 != settings.sabadell_iban_last4) | Account.iban_last4.is_(None),
+            )
+        ).all()
+        if account_ids:
+            db.execute(delete(Transaction).where(Transaction.account_id.in_(account_ids)))
+            db.execute(delete(Account).where(Account.id.in_(account_ids)))
+            db.commit()
+    finally:
+        db.close()
+
 class ConnectionRequest(BaseModel):
     institution_id: str
     institution_name: str | None = None
@@ -30,6 +53,7 @@ class ConnectionRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     init_db()
+    remove_excluded_sabadell_data()
     if settings.gc_secret_id and settings.gc_secret_key:
         scheduler.add_job(sync_all, "interval", hours=settings.sync_interval_hours, id="daily-sync", replace_existing=True)
         scheduler.start()
