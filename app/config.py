@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:8000"
     api_key: str = ""
     sabadell_iban_last4: str = ""
+    dashboard_password: str = ""
+    dashboard_session_secret: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
