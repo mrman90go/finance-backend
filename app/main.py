@@ -20,7 +20,9 @@ scheduler = AsyncIOScheduler()
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def require_api_key(api_key: str | None = Security(api_key_header)):
-    if settings.api_key and api_key != settings.api_key:
+    if not settings.api_key:
+        raise HTTPException(status_code=503, detail="API key is not configured")
+    if api_key != settings.api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 def remove_excluded_sabadell_data():
