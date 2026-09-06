@@ -19,7 +19,17 @@ async def sync_all():
             conn.status = req.get("status", "unknown")
             if req.get("status") not in {"LN", "SU"}:
                 continue
-            for gc_account_id in req.get("accounts", []):
+            gc_account_ids = req.get("accounts", [])
+            if conn.institution_id == "BANCSABADELL_BSABESBB" and settings.sabadell_iban_last4:
+                selected = db.scalar(
+                    select(Account).where(
+                        Account.connection_id == conn.id,
+                        Account.iban_last4 == settings.sabadell_iban_last4,
+                    )
+                )
+                if selected:
+                    gc_account_ids = [selected.gocardless_account_id]
+            for gc_account_id in gc_account_ids:
                 details = await client.account_details(gc_account_id)
                 owner = details.get("account", {}) if isinstance(details, dict) else {}
                 iban = owner.get("iban") or owner.get("accountNumber")
