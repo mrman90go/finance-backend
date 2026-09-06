@@ -60,8 +60,6 @@ def refresh_classifications(db):
     incoming = [t for t in transactions if t.amount > 0]
     used_incoming = set()
     for sent in outgoing:
-        if not transfer_hint(sent):
-            continue
         for received in incoming:
             if received.id in used_incoming or received.account_id == sent.account_id:
                 continue
@@ -92,18 +90,36 @@ def finance_summary(db, period):
     today = date.today()
     if period == "daily":
         start = today - timedelta(days=13)
-        label = "Last 14 days"
+        label = "Daily activity · last 14 days"
         key_for = lambda tx: tx.booking_date.isoformat() if tx.booking_date else "Unknown"
     elif period == "yearly":
-        start = date.min
-        label = "Yearly"
-        key_for = lambda tx: str(tx.booking_date.year) if tx.booking_date else "Unknown"
-    else:
-        start = (today.replace(day=1) - timedelta(days=335)).replace(day=1)
-        label = "Last 12 months"
+        start = today.replace(month=1, day=1)
+        label = str(today.year)
         key_for = lambda tx: tx.booking_date.strftime("%Y-%m") if tx.booking_date else "Unknown"
+    else:
+        start = today.replace(day=1)
+        label = today.strftime("%B %Y")
+        key_for = lambda tx: tx.booking_date.isoformat() if tx.booking_date else "Unknown"
 
-    visible = [t for t in transactions if t.booking_date and t.booking_date >= start and not t.is_internal_transfer]
+    seen = set()
+    visible = []
+    for transaction in transactions:
+        fingerprint = (
+            transaction.account_id,
+            transaction.booking_date,
+            transaction.amount,
+            transaction.currency,
+            " ".join(transaction_text(transaction).split()),
+        )
+        if (
+            not transaction.booking_date
+            or transaction.booking_date < start
+            or transaction.is_internal_transfer
+            or fingerprint in seen
+        ):
+            continue
+        seen.add(fingerprint)
+        visible.append(transaction)
     income = sum((t.amount for t in visible if t.amount > 0), Decimal("0"))
     expenses = sum((-t.amount for t in visible if t.amount < 0), Decimal("0"))
     categories = defaultdict(Decimal)
