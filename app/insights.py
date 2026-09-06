@@ -38,6 +38,11 @@ def category_for(transaction):
 def transfer_hint(transaction):
     return any(word in transaction_text(transaction) for word in TRANSFER_WORDS)
 
+def same_counterparty(first, second):
+    first_text = " ".join(transaction_text(first).split())
+    second_text = " ".join(transaction_text(second).split())
+    return len(first_text) >= 8 and first_text == second_text and len(first_text.split()) >= 2
+
 
 def refresh_classifications(db):
     transactions = db.scalars(
@@ -63,7 +68,11 @@ def refresh_classifications(db):
                 continue
             if abs((sent.booking_date - received.booking_date).days) > 3:
                 continue
-            if not (transfer_hint(received) or sent.booking_date == received.booking_date):
+            explicit_transfer = transfer_hint(sent) and (
+                transfer_hint(received) or sent.booking_date == received.booking_date
+            )
+            named_counterparty = same_counterparty(sent, received)
+            if not (explicit_transfer or named_counterparty):
                 continue
             group = f"transfer-{sent.id}-{received.id}"
             sent.is_internal_transfer = received.is_internal_transfer = True
