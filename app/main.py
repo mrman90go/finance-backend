@@ -1,7 +1,11 @@
+import hashlib
+import hmac
 import secrets
+import time
 from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi import FastAPI, Depends, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy import delete, select, func
@@ -64,6 +68,58 @@ async def startup():
 async def shutdown():
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
+def dashboard_session_valid(request: Request) -> bool:
+    token = request.cookies.get("finance_dashboard")
+    secret = settings.dashboard_session_secret
+    if not token or not secret:
+        return False
+    try:
+        issued_at, signature = token.split(".", 1)
+        payload = issued_at.encode()
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature, expected) and time.time() - int(issued_at) < 7 * 24 * 3600
+    except (ValueError, TypeError):
+        return False
+
+def dashboard_login_page(error: str = "") -> HTMLResponse:
+    message = '<p class="error">Incorrect password.</p>' if error else ""
+    return HTMLResponse(f"""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Personal Finance</title>
+    <style>body{{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0}}main{{background:#172554;padding:2rem;border-radius:16px;width:min(360px,88vw)}}input,button{{box-sizing:border-box;width:100%;padding:.75rem;margin:.5rem 0;border-radius:8px;border:0}}button{{background:#38bdf8;color:#082f49;font-weight:700}}.error{{color:#fca5a5}}</style></head><body><main><h1>Personal Finance</h1><p>Enter your dashboard password.</p>{message}<form method="post" action="/login"><input type="password" name="password" autocomplete="current-password" autofocus required><button type="submit">Open dashboard</button></form></main></body></html>""")
+
+@app.get("/", response_class=HTMLResponse)
+def private_dashboard(request: Request):
+    if not dashboard_session_valid(request):
+        return dashboard_login_page()
+    db = SessionLocal()
+    try:
+        accounts = db.scalars(select(Account).order_by(Account.institution_name, Account.name)).all()
+        recent = db.scalars(select(Transaction).order_by(Transaction.booking_date.desc()).limit(20)).all()
+        total = sum((a.current_balance or 0) for a in accounts)
+        account_rows = "".join(f"<tr><td>{a.institution_name or ''}</td><td>{a.name or ''}</td><td>•••• {a.iban_last4 or ''}</td><td class='amount'>{float(a.current_balance or 0):,.2f} {a.currency}</td></tr>" for a in accounts)
+        transaction_rows = "".join(f"<tr><td>{t.booking_date or ''}</td><td>{t.merchant or t.description or 'Transaction'}</td><td class='amount'>{float(t.amount):,.2f} {t.currency}</td></tr>" for t in recent)
+        return HTMLResponse(f"""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Personal Finance</title>
+        <style>body{{font-family:system-ui,sans-serif;background:#f8fafc;color:#0f172a;margin:0}}main{{max-width:960px;margin:auto;padding:2rem}}header{{display:flex;justify-content:space-between;align-items:center}}a{{color:#0369a1}}.total{{font-size:2.4rem;font-weight:700}}section{{background:white;border-radius:14px;padding:1.25rem;margin-top:1.25rem;box-shadow:0 1px 4px #cbd5e1}}table{{width:100%;border-collapse:collapse}}td,th{{padding:.7rem;text-align:left;border-bottom:1px solid #e2e8f0}}.amount{{text-align:right;font-variant-numeric:tabular-nums}}@media(max-width:600px){{main{{padding:1rem}}td,th{{padding:.5rem;font-size:.9rem}}}}</style></head><body><main><header><div><h1>Personal Finance</h1><p>Last synced balances and recent activity</p></div><a href="/logout">Log out</a></header><section><p>Total assets</p><div class="total">€{float(total):,.2f}</div><p>{len(accounts)} linked accounts</p></section><section><h2>Accounts</h2><table><thead><tr><th>Institution</th><th>Account</th><th>IBAN</th><th class="amount">Balance</th></tr></thead><tbody>{account_rows}</tbody></table></section><section><h2>Recent transactions</h2><table><thead><tr><th>Date</th><th>Description</th><th class="amount">Amount</th></tr></thead><tbody>{transaction_rows}</tbody></table></section></main></body></html>""")
+    finally:
+        db.close()
+
+@app.post("/login")
+async def dashboard_login(request: Request):
+    body = (await request.body()).decode()
+    password = body.partition("password=")[2].replace("+", " ")
+    if not settings.dashboard_password or not hmac.compare_digest(password, settings.dashboard_password):
+        return dashboard_login_page("incorrect")
+    issued_at = str(int(time.time()))
+    signature = hmac.new(settings.dashboard_session_secret.encode(), issued_at.encode(), hashlib.sha256).hexdigest()
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie("finance_dashboard", f"{issued_at}.{signature}", httponly=True, secure=True, samesite="strict", max_age=7 * 24 * 3600)
+    return response
+
+@app.get("/logout")
+def dashboard_logout():
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie("finance_dashboard")
+    return response
 
 @app.get("/health")
 def health():
