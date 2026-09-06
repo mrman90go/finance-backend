@@ -20,15 +20,21 @@ async def sync_all():
             if req.get("status") not in {"LN", "SU"}:
                 continue
             for gc_account_id in req.get("accounts", []):
+                details = await client.account_details(gc_account_id)
+                owner = details.get("account", {}) if isinstance(details, dict) else {}
+                iban = owner.get("iban") or owner.get("accountNumber")
+                if (
+                    conn.institution_id == "BANCSABADELL_BSABESBB"
+                    and settings.sabadell_iban_last4
+                    and str(iban or "")[-4:] != settings.sabadell_iban_last4
+                ):
+                    continue
                 account = db.scalar(select(Account).where(Account.gocardless_account_id == gc_account_id))
                 if not account:
                     account = Account(gocardless_account_id=gc_account_id, connection_id=conn.id, institution_name=conn.institution_name)
                     db.add(account); db.flush()
-                details = await client.account_details(gc_account_id)
                 balances = await client.balances(gc_account_id)
-                owner = details.get("account", {}) if isinstance(details, dict) else {}
                 account.name = owner.get("name") or owner.get("ownerName") or account.name
-                iban = owner.get("iban") or owner.get("accountNumber")
                 if iban: account.iban_last4 = str(iban)[-4:]
                 txdata = await client.transactions(gc_account_id)
                 bal_items = balances.get("balances", [])
