@@ -39,7 +39,7 @@ async def sync_all():
                     account.currency = current.get("balanceAmount", {}).get("currency", account.currency)
                     account.balance_updated_at = datetime.utcnow()
                 for tx in txdata.get("transactions", {}).get("booked", []):
-                    provider_id = tx.get("transactionId")
+                    provider_id = tx.get("internalTransactionId") or tx.get("entryReference") or tx.get("transactionId")
                     if provider_id and db.scalar(select(Transaction).where(Transaction.account_id == account.id, Transaction.provider_transaction_id == provider_id)):
                         continue
                     amount = Decimal(tx["transactionAmount"]["amount"])
