@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     sync_interval_hours: int = 24
     cors_origins: str = "http://localhost:8000"
     api_key: str = ""
+    sabadell_iban_last4: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
