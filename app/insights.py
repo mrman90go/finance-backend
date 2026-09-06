@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
+import re
 
 from sqlalchemy import select
 
@@ -39,9 +40,11 @@ def transfer_hint(transaction):
     return any(word in transaction_text(transaction) for word in TRANSFER_WORDS)
 
 def same_counterparty(first, second):
-    first_text = " ".join(transaction_text(first).split())
-    second_text = " ".join(transaction_text(second).split())
-    return len(first_text) >= 8 and first_text == second_text and len(first_text.split()) >= 2
+    first_words = set(re.findall(r"[a-zà-ÿ]{4,}", transaction_text(first)))
+    second_words = set(re.findall(r"[a-zà-ÿ]{4,}", transaction_text(second)))
+    ignored = {"transfer", "transaction", "payment", "charge", "travel"}
+    shared = (first_words & second_words) - ignored
+    return len(shared) >= 2 or any(len(word) >= 8 for word in shared)
 
 
 def refresh_classifications(db):
