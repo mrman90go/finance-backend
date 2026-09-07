@@ -18,7 +18,7 @@ from .db import init_db, SessionLocal
 from .models import Connection, Account, Transaction
 from .gocardless import GoCardlessClient
 from .sync import sync_all
-from .insights import finance_summary
+from .dashboard_ui import render_dashboard
 
 app = FastAPI(title="Personal Finance Backend", version="0.2.0")
 origins = [x.strip() for x in settings.cors_origins.split(",") if x.strip()]
@@ -91,49 +91,10 @@ def dashboard_login_page(error: str = "") -> HTMLResponse:
     <style>body{{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:grid;place-items:center;min-height:100vh;margin:0}}main{{background:#172554;padding:2rem;border-radius:16px;width:min(360px,88vw)}}input,button{{box-sizing:border-box;width:100%;padding:.75rem;margin:.5rem 0;border-radius:8px;border:0}}button{{background:#38bdf8;color:#082f49;font-weight:700}}.error{{color:#fca5a5}}</style></head><body><main><h1>Personal Finance</h1><p>Enter your dashboard password.</p>{message}<form method="post" action="/login"><input type="password" name="password" autocomplete="current-password" autofocus required><button type="submit">Open dashboard</button></form></main></body></html>""")
 
 @app.get("/", response_class=HTMLResponse)
-def private_dashboard(request: Request, period: str = "monthly"):
+def private_dashboard(request: Request, period: str = "monthly", view: str = "overview"):
     if not dashboard_session_valid(request):
         return dashboard_login_page()
-    if period not in {"daily", "monthly", "yearly"}:
-        period = "monthly"
-    db = SessionLocal()
-    try:
-        accounts = db.scalars(select(Account).order_by(Account.institution_name, Account.name)).all()
-        summary = finance_summary(db, period)
-        total = sum((a.current_balance or 0) for a in accounts)
-        account_rows = "".join(
-            f"<tr><td>{escape(a.institution_name or '')}</td><td>{escape(a.name or '')}</td><td>•••• {escape(a.iban_last4 or '')}</td><td class='amount'>{float(a.current_balance or 0):,.2f} {escape(a.currency)}</td></tr>"
-            for a in accounts
-        )
-        category_rows = "".join(
-            f"<tr><td>{escape(category)}</td><td class='amount'>€{float(amount):,.2f}</td></tr>"
-            for category, amount in summary["categories"]
-        ) or "<tr><td colspan='2'>No expenses in this period.</td></tr>"
-        transaction_rows = "".join(
-            f"<tr><td>{t.booking_date or ''}</td><td>{escape(t.category)}</td><td>{escape(t.merchant or t.description or 'Transaction')}</td><td class='amount {'positive' if t.amount > 0 else 'negative'}'>{float(t.amount):,.2f} {escape(t.currency)}</td></tr>"
-            for t in summary["recent"]
-        ) or "<tr><td colspan='4'>No non-transfer transactions in this period.</td></tr>"
-        trend = summary["trend"]
-        maximum = max((max(income, expenses) for _, income, expenses in trend), default=1)
-        trend_rows = "".join(
-            f"<div class='trend-row'><span>{escape(label)}</span><div class='bar income' style='width:{float(income / maximum * 100):.1f}%'></div><b>+€{float(income):,.0f}</b><div class='bar expense' style='width:{float(expenses / maximum * 100):.1f}%'></div><b>-€{float(expenses):,.0f}</b></div>"
-            for label, income, expenses in trend
-        ) or "<p>No transaction history for this period.</p>"
-        active = {"daily": "", "monthly": "", "yearly": ""}
-        active[period] = "active"
-        return HTMLResponse(f"""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Personal Finance</title>
-        <style>
-        :root{{color-scheme:light;font-family:system-ui,-apple-system,sans-serif;color:#172033;background:#f5f7fb}}body{{margin:0}}main{{max-width:1120px;margin:auto;padding:28px 22px 48px}}header{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}}h1{{margin:0;font-size:2rem}}p{{color:#64748b}}a{{color:#0369a1}}.periods{{display:flex;gap:8px;margin:22px 0}}.periods a{{padding:8px 13px;border-radius:9px;text-decoration:none;background:#e7edf7;color:#334155}}.periods .active{{background:#0f766e;color:white}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}}.card,section{{background:white;border-radius:15px;padding:18px;box-shadow:0 1px 4px #d8e0ed}}.card p{{margin:0 0 8px;font-size:.88rem}}.value{{font-size:1.7rem;font-weight:750;font-variant-numeric:tabular-nums}}.positive{{color:#087f5b}}.negative{{color:#c2410c}}section{{margin-top:16px}}h2{{font-size:1.15rem;margin:0 0 12px}}table{{width:100%;border-collapse:collapse}}th,td{{padding:10px 8px;text-align:left;border-bottom:1px solid #e8edf4}}th{{font-size:.78rem;text-transform:uppercase;color:#64748b}}.amount{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}.trend-row{{display:grid;grid-template-columns:88px minmax(10px,1fr) 68px minmax(10px,1fr) 68px;align-items:center;gap:8px;margin:10px 0;font-size:.82rem}}.bar{{height:9px;border-radius:10px;min-width:2px}}.income{{background:#34d399}}.expense{{background:#fb923c}}.note{{font-size:.85rem;margin-bottom:0}}@media(max-width:760px){{main{{padding:18px 12px}}.cards{{grid-template-columns:repeat(2,1fr)}}.trend-row{{grid-template-columns:66px 1fr 58px}}.trend-row .expense{{display:none}}.trend-row b:last-child{{display:none}}table{{font-size:.86rem}}th,td{{padding:8px 5px}}}}@media(max-width:430px){{.cards{{grid-template-columns:1fr 1fr}}.value{{font-size:1.35rem}}}}
-        </style></head><body><main><header><div><h1>Personal Finance</h1><p>{summary["label"]} · updated from your linked accounts</p></div><a href="/logout">Log out</a></header>
-        <nav class="periods"><a class="{active['daily']}" href="/?period=daily">Daily</a><a class="{active['monthly']}" href="/?period=monthly">Monthly</a><a class="{active['yearly']}" href="/?period=yearly">Yearly</a></nav>
-        <div class="cards"><div class="card"><p>Income</p><div class="value positive">€{float(summary["income"]):,.2f}</div></div><div class="card"><p>Expenses</p><div class="value negative">€{float(summary["expenses"]):,.2f}</div></div><div class="card"><p>Net</p><div class="value {'positive' if summary["net"] >= 0 else 'negative'}">€{float(summary["net"]):,.2f}</div></div><div class="card"><p>Total assets</p><div class="value">€{float(total):,.2f}</div></div></div>
-        <section><h2>Income and expenses over time</h2>{trend_rows}</section>
-        <section><h2>Expenses by category</h2><table><thead><tr><th>Category</th><th class="amount">Spent</th></tr></thead><tbody>{category_rows}</tbody></table></section>
-        <section><h2>Accounts</h2><table><thead><tr><th>Institution</th><th>Account</th><th>IBAN</th><th class="amount">Balance</th></tr></thead><tbody>{account_rows}</tbody></table></section>
-        <section><h2>Recent activity</h2><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th class="amount">Amount</th></tr></thead><tbody>{transaction_rows}</tbody></table><p class="note">Matched transfers between your linked accounts are excluded from income and expenses.</p></section>
-        </main></body></html>""")
-    finally:
-        db.close()
+    return render_dashboard(period, view)
 
 @app.post("/login")
 async def dashboard_login(request: Request):
